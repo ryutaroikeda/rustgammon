@@ -16,6 +16,7 @@ extern crate log4rs;
 extern crate rand;
 
 pub const BOARD_SIZE: usize = 26;
+pub const BEARING_OFF_POS: usize = BOARD_SIZE - 1;
 
 pub type Position = usize;
 
@@ -45,7 +46,7 @@ pub type DiceRoll = (Die, Die);
 
 pub struct Submove {
     from: Position,
-    to: Position,
+    die: Die,
 }
 
 pub struct Move {
@@ -77,6 +78,15 @@ impl Color {
     }
 }
 
+impl Submove {
+    fn destination(&self) -> Position {
+        if self.from + self.die >= BOARD_SIZE {
+            return BEARING_OFF_POS;
+        }
+        return self.from + self.die;
+    }
+}
+
 impl Backgammon {
     fn init(&mut self) {
         self.red_board = Default::default();
@@ -92,8 +102,15 @@ impl Backgammon {
         }
     }
 
+    fn get_mut_board(&mut self, color: Color) -> &mut Board {
+        return match color {
+            Color::Red => &mut self.red_board,
+            Color::Black => &mut self.black_board,
+        }
+    }
+
     fn get_opposite_pos(&self, pos: Position) -> Position {
-        return BOARD_SIZE - 1 - pos;
+        return BEARING_OFF_POS - pos;
     }
 
     fn is_blocked(&self, color: Color, pos: Position) -> bool {
@@ -117,6 +134,7 @@ impl Backgammon {
         return true;
     }
 
+    // @todo We need to report user errors.
     fn can_do_submove(&self, color: Color, submove: &Submove) -> bool {
         let board = self.get_board(color);
         // Make sure there is a checker to move.
@@ -128,15 +146,24 @@ impl Backgammon {
         if 0 < board.get(bar_position) && submove.from != bar_position {
             return false;
         }
-        let bear_off_position = BOARD_SIZE - 1;
-        // If we're bearing off a checker, make sure all checkers are on the home board.
-        // @warning This only works because it is impossible to bear off a checker outside the home
-        // board in one submove.
-        if submove.to == bear_off_position && !self.is_all_home(color) {
-            return false;
+        // We're bearing off a checker.
+        if submove.destination() == BEARING_OFF_POS {
+            // Make sure all checkers are on the home board.
+            if !self.is_all_home(color) {
+                return false;
+            }
+            // A die may not be used to bear off a lower numbered point unless there are no 
+            // checkers on any higher points.
+            let start_pos = BEARING_OFF_POS - submove.die;
+            for pos in start_pos..submove.from {
+                if 0 < board.get(pos) {
+                    return false;
+                }
+            }
         }
+
         // Make sure the destination isn't blocked.
-        if self.is_blocked(color, submove.to) {
+        if self.is_blocked(color, submove.destination()) {
             return false;
         }
         return true;
@@ -146,7 +173,7 @@ impl Backgammon {
     fn list_submoves(&self, color: Color, die: Die) -> Vec<Submove> {
         let mut submoves: Vec<Submove> = Vec::new();
         for pos in 0..BOARD_SIZE {
-            let submove = Submove { from: pos, to: pos + die };
+            let submove = Submove { from: pos, die: die };
             if self.can_do_submove(color, &submove) {
                 submoves.push(submove);
             }
@@ -154,14 +181,34 @@ impl Backgammon {
         return submoves;
     }
 
+    fn play_submove(&mut self, color: Color, submove: &Submove) {
+        debug_assert!(self.can_do_submove(color, &submove));
+        let mut board = self.get_mut_board(color);
+        let checkers_from = board.get(submove.from);
+        let checkers_to   = board.get(submove.destination());
+        board.set(submove.from, checkers_from - 1);
+        board.set(submove.destination(), checkers_to + 1);
+    }
+
     // List all legal moves.
     // @fixme What do we do about duplicate moves?
+    // 1. play out and compare board position
+    // 2. Order matters when we're not home yet and one move is bearing off. It also matters when
+    //    we're home.
+    //
+    // Rules:
+    // You must play all dice if possible.
+    // If only one die can be played, the largest possible must be played.
+    // What happens when one die is legal and the other is not? Play the legal die. If the other
+    // die becomes legal, can it be moved?
+    //
+    //
+    /*
     fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
         // There are three cases:
         // 1. first move with first die,
         // 2. first move with second die,
         // 3. double.
-        /*
         let mut dies = Vec::new();
         dies.push(roll.0);
         dies.push(roll.1);
@@ -170,9 +217,10 @@ impl Backgammon {
             dies.push(roll.0);
             dies.push(roll.1);
         }
-        */
     }
+    */
 }
+
 /*
 fn roll_dice() -> [i8; 2] {
     let a = rand::thread_rng().gen_range(1, 7);
@@ -180,6 +228,7 @@ fn roll_dice() -> [i8; 2] {
     return [a, b];
 }
 */
+
 fn main() {
     log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
     info!("rustgammon - Backgammon implementation in Rust");
@@ -225,7 +274,7 @@ mod tests {
     fn test_can_do_submove_true_for_empty() {
         let mut game: Backgammon = Default::default();
         game.red_board.set(1, 1);
-        let submove = Submove { from: 1, to: 1 };
+        let submove = Submove { from: 1, die: 1 };
         assert!(game.can_do_submove(Color::Red, &submove));
     }
 
@@ -233,7 +282,7 @@ mod tests {
     fn test_can_do_submove_false_for_not_moving_bar() {
         let mut game: Backgammon = Default::default();
         game.red_board.set(0, 1);
-        let submove = Submove { from: 1, to: 1 };
+        let submove = Submove { from: 1, die: 1 };
         assert!(!game.can_do_submove(Color::Red, &submove));
     }
 
@@ -241,10 +290,9 @@ mod tests {
     fn test_can_do_submove_false_for_bearing_off_without_all_in_home() {
         let mut game: Backgammon = Default::default();
         let home_pos = BOARD_SIZE - 2;
-        let bearing_off_pos = BOARD_SIZE - 1;
         game.red_board.set(1, 1);
         game.red_board.set(home_pos, 1);
-        let submove = Submove { from: home_pos, to: bearing_off_pos };
+        let submove = Submove { from: home_pos, die: 1 };
         assert!(!game.can_do_submove(Color::Red, &submove));
     }
 
@@ -254,12 +302,21 @@ mod tests {
         game.red_board.set(1, 1);
         let black_pos = game.get_opposite_pos(2);
         game.black_board.set(black_pos, 2);
-        let submove = Submove { from: 1, to: 2 };
+        let submove = Submove { from: 1, die: 1 };
         assert!(!game.can_do_submove(Color::Red, &submove));
     }
 
     #[test]
-    fn test_list_submoves_empty_for_empty() {
+    fn test_can_do_submove_false_for_bearing_off_lower() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(BEARING_OFF_POS - 1, 1);
+        game.red_board.set(BEARING_OFF_POS - 2, 1);
+        let submove = Submove { from: BEARING_OFF_POS - 1, die: 2 };
+        assert!(!game.can_do_submove(Color::Red, &submove));
+    }
+
+    #[test]
+    fn test_list_submoves_lists_empty_for_empty() {
         let game: Backgammon = Default::default();
         let die = 1;
         let submoves = game.list_submoves(Color::Red, die);
@@ -267,13 +324,23 @@ mod tests {
     }
 
     #[test]
-    fn test_list_submoves_pushes_one_submove() {
+    fn test_list_submoves_lists_one_submove() {
         let mut game: Backgammon = Default::default();
         game.red_board.set(1, 1);
         let die = 1;
         let submoves = game.list_submoves(Color::Red, die);
         assert_eq!(submoves.len(), 1);
         assert_eq!(submoves[0].from, 1);
-        assert_eq!(submoves[0].to, 2);
+        assert_eq!(submoves[0].die, 1);
+    }
+
+    #[test]
+    fn test_play_submove_does_submove() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let submove = Submove { from: 1, die: 1 };
+        game.play_submove(Color::Red, &submove);
+        assert_eq!(game.red_board.get(1), 0);
+        assert_eq!(game.red_board.get(2), 1);
     }
 }
