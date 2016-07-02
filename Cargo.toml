@@ -1,0 +1,12 @@
+[package]
+name = "rustgammon"
+version = "0.1.0"
+authors = ["Ryutaro Ikeda <ryutaroikeda94@gmail.com>"]
+
+[dependencies]
+log = "0.3.6"
+rand = "0.3.0"
+
+[dependencies.log4rs]
+version = "0.4.8"
+features = ["yaml"]
