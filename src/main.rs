@@ -16,6 +16,7 @@ extern crate log4rs;
 extern crate rand;
 
 pub const BOARD_SIZE: usize = 26;
+pub const BAR_POS: usize = 0;
 pub const BEARING_OFF_POS: usize = BOARD_SIZE - 1;
 
 pub type Position = usize;
@@ -24,7 +25,7 @@ pub type Checker = i8;
 
 pub type InternalBoard = [Checker; BOARD_SIZE];
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct Board {
     board: InternalBoard,
 }
@@ -35,7 +36,7 @@ pub enum Color {
     Black,
 }
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct Backgammon {
     red_board: Board,
     black_board: Board,
@@ -95,17 +96,17 @@ impl Backgammon {
         self.black_board.board = INITIAL_BOARD;
     }
 
-    fn get_board(&self, color: Color) -> &Board {
+    fn get_board(&self, color: Color, pos: Position) -> Checker {
         return match color {
-            Color::Red => &self.red_board,
-            Color::Black => &self.black_board,
+            Color::Red => self.red_board.get(pos),
+            Color::Black=> self.black_board.get(pos),
         }
     }
 
-    fn get_mut_board(&mut self, color: Color) -> &mut Board {
-        return match color {
-            Color::Red => &mut self.red_board,
-            Color::Black => &mut self.black_board,
+    fn set_board(&mut self, color: Color, pos: Position, checkers: Checker) {
+        match color {
+            Color::Red => self.red_board.set(pos, checkers),
+            Color::Black => self.black_board.set(pos, checkers),
         }
     }
 
@@ -114,20 +115,18 @@ impl Backgammon {
     }
 
     fn is_blocked(&self, color: Color, pos: Position) -> bool {
-        let board = self.get_board(color.opposite());
         // Reverse the position to look at the opponent's board from your point of view.
         let opposite_pos = self.get_opposite_pos(pos);
-        if 1 < board.get(opposite_pos) {
+        if 1 < self.get_board(color.opposite(), opposite_pos) {
             return true;
         }
         return false;
     }
 
     fn is_all_home(&self, color: Color) -> bool {
-        let board = self.get_board(color);
         let end_of_outer_board = 19;
         for pos in 0..end_of_outer_board {
-            if 0 < board.get(pos) {
+            if 0 < self.get_board(color, pos) {
                 return false;
             }
         }
@@ -136,14 +135,13 @@ impl Backgammon {
 
     // @todo We need to report user errors.
     fn can_do_submove(&self, color: Color, submove: &Submove) -> bool {
-        let board = self.get_board(color);
         // Make sure there is a checker to move.
-        if 0 == board.get(submove.from) {
+        if 0 == self.get_board(color, submove.from) {
             return false;
         }
         // If there are checkers in the bar, they must be moved first.
         let bar_position = 0;
-        if 0 < board.get(bar_position) && submove.from != bar_position {
+        if 0 < self.get_board(color, bar_position) && submove.from != bar_position {
             return false;
         }
         // We're bearing off a checker.
@@ -156,7 +154,7 @@ impl Backgammon {
             // checkers on any higher points.
             let start_pos = BEARING_OFF_POS - submove.die;
             for pos in start_pos..submove.from {
-                if 0 < board.get(pos) {
+                if 0 < self.get_board(color, pos) {
                     return false;
                 }
             }
@@ -183,42 +181,59 @@ impl Backgammon {
 
     fn play_submove(&mut self, color: Color, submove: &Submove) {
         debug_assert!(self.can_do_submove(color, &submove));
-        let mut board = self.get_mut_board(color);
-        let checkers_from = board.get(submove.from);
-        let checkers_to   = board.get(submove.destination());
-        board.set(submove.from, checkers_from - 1);
-        board.set(submove.destination(), checkers_to + 1);
+        let destination = submove.destination();
+        let checkers_from = self.get_board(color, submove.from);
+        let checkers_to = self.get_board(color, destination);
+        // Check if we hit an opposing checker and move it to the bar.
+        let opposite_pos = self.get_opposite_pos(destination);
+        let opposite_color = color.opposite();
+        let is_blot = 0 < self.get_board(opposite_color, opposite_pos);
+        if is_blot {
+            self.set_board(opposite_color, BAR_POS, 1);
+            self.set_board(opposite_color, opposite_pos, 0);
+        }
+        self.set_board(color, submove.from, checkers_from - 1);
+        self.set_board(color, destination, checkers_to + 1);
+    }
+
+    fn list_moves_with_ordered_dice_r(&self, color: Color, dice: &[Die]) -> Vec<Move> {
+        let mut moves = Vec::new();
+        let (die, tail_dice) = match dice.split_first() {
+            Some((head, tail)) => (*head, tail),
+            None => return moves,
+        };
+        let submoves = self.list_submoves(color, die);
+        for submove in &submoves {
+            let mut game = self.clone();
+            game.play_submove(color, submove);
+            let mut next_moves = game.list_moves_with_ordered_dice_r(color, tail_dice);
+            for next_move in &mut next_moves {
+                //next_move.submoves.push(submove);
+            }
+            moves.extend(next_moves);
+        }
+        return moves;
     }
 
     // List all legal moves.
-    // @fixme What do we do about duplicate moves?
-    // 1. play out and compare board position
-    // 2. Order matters when we're not home yet and one move is bearing off. It also matters when
-    //    we're home.
-    //
+    // Worst case is 15 ^4 ~= 2 ^ 16
+    // @fixme What do we do about duplicate moves? Can play the moves and compare board positions.
     // Rules:
     // You must play all dice if possible.
     // If only one die can be played, the largest possible must be played.
-    // What happens when one die is legal and the other is not? Play the legal die. If the other
-    // die becomes legal, can it be moved?
-    //
-    //
-    /*
-    fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
+    //fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
         // There are three cases:
         // 1. first move with first die,
         // 2. first move with second die,
         // 3. double.
-        let mut dies = Vec::new();
-        dies.push(roll.0);
-        dies.push(roll.1);
+        /*
         let is_double = roll.0 == roll.1;
         if is_double {
-            dies.push(roll.0);
-            dies.push(roll.1);
+
         }
-    }
-    */
+        */
+
+    //}
 }
 
 /*
@@ -335,12 +350,16 @@ mod tests {
     }
 
     #[test]
-    fn test_play_submove_does_submove() {
+    fn test_play_submove_does_submove_and_hits_blot() {
         let mut game: Backgammon = Default::default();
         game.red_board.set(1, 1);
+        let black_pos = game.get_opposite_pos(2);
+        game.black_board.set(black_pos, 1);
         let submove = Submove { from: 1, die: 1 };
         game.play_submove(Color::Red, &submove);
         assert_eq!(game.red_board.get(1), 0);
         assert_eq!(game.red_board.get(2), 1);
+        assert_eq!(game.black_board.get(black_pos), 0);
+        assert_eq!(game.black_board.get(0), 1);
     }
 }
