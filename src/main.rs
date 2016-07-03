@@ -3,7 +3,7 @@
  *
  * Backgammon implementation in Rust.
  * 
- * @note Ignore stakes for now.
+ * @note Ignore doubling cube for now.
  *
  * @author ryutaroikeda94@gmail.com
  *
@@ -45,6 +45,7 @@ pub struct Backgammon {
 pub type Die = usize;
 pub type DiceRoll = (Die, Die);
 
+#[derive(Copy, Clone)]
 pub struct Submove {
     from: Position,
     die: Die,
@@ -196,9 +197,11 @@ impl Backgammon {
         self.set_board(color, destination, checkers_to + 1);
     }
 
+    // List the moves for the given order of playing the dice.
+    // Move.submoves is a stack of submoves.
     fn list_moves_with_ordered_dice_r(&self, color: Color, dice: &[Die]) -> Vec<Move> {
         let mut moves = Vec::new();
-        let (die, tail_dice) = match dice.split_first() {
+        let (die, dice_tail) = match dice.split_first() {
             Some((head, tail)) => (*head, tail),
             None => return moves,
         };
@@ -206,9 +209,13 @@ impl Backgammon {
         for submove in &submoves {
             let mut game = self.clone();
             game.play_submove(color, submove);
-            let mut next_moves = game.list_moves_with_ordered_dice_r(color, tail_dice);
+            let mut next_moves = game.list_moves_with_ordered_dice_r(color, dice_tail);
+            // If we found no moves, create an empty move so we can put the current submove.
+            if next_moves.is_empty() {
+                next_moves.push(Move { submoves: Vec::new() });
+            }
             for next_move in &mut next_moves {
-                //next_move.submoves.push(submove);
+                next_move.submoves.push(*submove);
             }
             moves.extend(next_moves);
         }
@@ -216,24 +223,51 @@ impl Backgammon {
     }
 
     // List all legal moves.
-    // Worst case is 15 ^4 ~= 2 ^ 16
+    // Worst case is about 15 ^4 ~= 2 ^ 16
     // @fixme What do we do about duplicate moves? Can play the moves and compare board positions.
     // Rules:
     // You must play all dice if possible.
-    // If only one die can be played, the largest possible must be played.
-    //fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
-        // There are three cases:
-        // 1. first move with first die,
-        // 2. first move with second die,
-        // 3. double.
-        /*
+    // If only one die can be played, the highest possible must be played.
+    fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
         let is_double = roll.0 == roll.1;
         if is_double {
-
+            let dice = vec!(roll.0, roll.0, roll.0, roll.0);
+            return self.list_moves_with_ordered_dice_r(color, &dice);
         }
-        */
-
-    //}
+        // We didn't roll a double.
+        let high = std::cmp::max(roll.0, roll.1);
+        let low  = std::cmp::min(roll.0, roll.1);
+        // @cleanup dry
+        let high_moves = self.list_moves_with_ordered_dice_r(color, &[high, low]);
+        let low_moves  = self.list_moves_with_ordered_dice_r(color, &[low, high]);
+        let mut can_play_both_dice = false;
+        let mut both_dice_moves: Vec<Move> = Vec::new();
+        for high_move in &high_moves {
+            if high_move.submoves.len() == 2 {
+                can_play_both_dice = true;
+                // @cleanup This doesn't look idiomatic.
+                let submoves = high_move.submoves.clone();
+                both_dice_moves.push(Move { submoves: submoves });
+            }
+        }
+        for low_move in &low_moves {
+            if low_move.submoves.len() == 2 {
+                can_play_both_dice = true;
+                let submoves = low_move.submoves.clone();
+                both_dice_moves.push(Move { submoves: submoves });
+            }
+        }
+        if can_play_both_dice {
+            // Allow only moves that use both dice.
+            return both_dice_moves;
+        } 
+        // We can only play one die. Make sure we play the highest possible die.
+        if 0 < high_moves.len() {
+            return high_moves;
+        } else {
+            return low_moves;
+        }
+    }
 }
 
 /*
@@ -251,6 +285,7 @@ fn main() {
     let mut game: Backgammon = Default::default();
     game.init();
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -362,4 +397,98 @@ mod tests {
         assert_eq!(game.black_board.get(black_pos), 0);
         assert_eq!(game.black_board.get(0), 1);
     }
+
+    #[test]
+    fn test_list_moves_with_ordered_dice_r_lists_move_for_two_dice() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let dice = vec!(1, 1);
+        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &dice);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].submoves.len(), 2);
+        assert_eq!(moves[0].submoves[1].from, 1);
+        assert_eq!(moves[0].submoves[1].die, 1);
+        assert_eq!(moves[0].submoves[0].from, 2);
+        assert_eq!(moves[0].submoves[0].die, 1);
+    }
+
+    #[test]
+    fn test_list_moves_with_ordered_dice_r_lists_empty_for_zero_dice() {
+        let game: Backgammon = Default::default();
+        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &Vec::new());
+        assert_eq!(moves.len(), 0);
+    }
+
+    #[test]
+    fn test_list_moves_with_ordered_dice_r_lists_empty_for_no_legal_move() {
+        let game: Backgammon = Default::default();
+        let dice = vec!(1);
+        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &dice);
+        assert_eq!(moves.len(), 0);
+    }
+
+    // This can be benchmarked.
+    /*
+    fn test_list_moves_with_ordered_dice_r_lists_double_ones() {
+        let mut game: Backgammon = Default::default();
+        // This should generate a lot of moves.
+        game.red_board.board = [
+            0,  1, 1, 1, 1, 1, 1,   1, 0, 1, 0, 1, 0,
+                1, 0, 1, 0, 1, 0,   1, 0, 1, 0, 1, 0,   0,
+        ];
+        let dice = vec!(1, 1, 1, 1);
+        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &dice);
+        println!("found {} moves", moves.len());
+    }
+    */
+
+    #[test]
+    fn test_list_moves_lists_move_for_double_ones() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let dice_roll = (1, 1);
+        let moves = game.list_moves(Color::Red, dice_roll);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].submoves.len(), 4);
+    }
+
+    #[test]
+    fn test_list_moves_lists_moves_for_both_dice() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let dice_roll = (1, 2);
+        let moves = game.list_moves(Color::Red, dice_roll);
+        assert_eq!(moves.len(), 2);
+    }
+
+    #[test]
+    fn test_list_moves_lists_higher_move() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let black_pos_1 = game.get_opposite_pos(4);
+        let black_pos_2 = game.get_opposite_pos(5);
+        game.black_board.set(black_pos_1, 2);
+        game.black_board.set(black_pos_2, 2);
+        let dice_roll = (1, 2);
+        let moves = game.list_moves(Color::Red, dice_roll);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].submoves.len(), 1);
+        assert_eq!(moves[0].submoves[0].die, 2);
+    }
+
+    #[test]
+    fn test_list_moves_lists_lower_move() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let black_pos_1 = game.get_opposite_pos(3);
+        let black_pos_2 = game.get_opposite_pos(4);
+        game.black_board.set(black_pos_1, 2);
+        game.black_board.set(black_pos_2, 2);
+        let dice_roll = (1, 2);
+        let moves = game.list_moves(Color::Red, dice_roll);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].submoves.len(), 1);
+        assert_eq!(moves[0].submoves[0].die, 1);
+    }
+
 }
