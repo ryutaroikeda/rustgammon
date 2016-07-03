@@ -12,4 +12,6 @@ fn main() {
 
     let mut game: Backgammon = Default::default();
     game.init();
+
+    game.print();
 }
