@@ -43,21 +43,11 @@ pub struct Submove {
 
 #[derive(PartialEq, Eq)]
 pub struct Move {
-    submoves: Vec<Submove>,
+    pub submoves: Vec<Submove>,
 }
 
-trait Player {
-    fn make_move(&self) -> Move;
-}
-
-pub struct CommandLinePlayer {
-    color: Color,
-}
-
-impl Player for CommandLinePlayer {
-    fn make_move(&self) -> Move {
-        return Move { submoves: Vec::new() };
-    }
+pub trait Player {
+    fn make_move(&self, color: Color, roll: DiceRoll) -> Move;
 }
 
 #[derive(Default, Copy, Clone)]
@@ -102,10 +92,8 @@ impl Submove {
 
 impl Backgammon {
     pub fn init(&mut self) {
-        self.red_board = Default::default();
-        self.red_board.board = INITIAL_BOARD;
-        self.white_board = Default::default();
-        self.white_board.board = INITIAL_BOARD;
+        self.red_board = Board { board: INITIAL_BOARD };
+        self.white_board = Board { board: INITIAL_BOARD };
     }
 
     fn get_board(&self, color: Color, pos: Position) -> Checker {
@@ -290,14 +278,19 @@ impl Backgammon {
         return false;
     }
 
-    /*
-    fn do_move(&mut self, mov: Move) {
-
+    fn do_move(&mut self, color: Color, mov: &Move) {
+        let mut move_idx = mov.submoves.len();
+        while move_idx > 0 {
+            move_idx -= 1;
+            self.do_submove(color, &mov.submoves[move_idx]);
+        }
     }
-    */
 
-    fn play_move<T: Player>(&self, player: &T) {
-        let player_move = player.make_move();
+    fn play_move<T: Player>(&mut self, color: Color, roll: DiceRoll, player: &T) {
+        let player_move = player.make_move(color, roll);
+        if self.can_do_move(color, roll, &player_move) {
+            self.do_move(color, &player_move);
+        }
     }
 
     pub fn print(&self) {
@@ -588,6 +581,18 @@ mod tests {
         // This is illegal because it leaves two more dice unused.
         let illegal_move = Move { submoves: vec!(second_submove, first_submove) };
         assert!(!game.can_do_move(Color::Red, dice_roll, &illegal_move));
+    }
+
+    #[test]
+    fn test_do_move_does_move() {
+        let mut game: Backgammon = Default::default();
+        game.red_board.set(1, 1);
+        let first_submove = Submove { from: 1, die: 1 };
+        let second_submove = Submove { from: 2, die: 2 };
+        let legal_move = Move { submoves: vec!(second_submove, first_submove) };
+        game.do_move(Color::Red, &legal_move);
+        assert_eq!(game.get_board(Color::Red, 1), 0);
+        assert_eq!(game.get_board(Color::Red, 4), 1);
     }
 
 }
