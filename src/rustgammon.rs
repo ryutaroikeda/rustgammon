@@ -9,7 +9,13 @@
  *
  */
 
+extern crate rand;
+
 use std;
+use std::io;
+use std::io::Write;
+use std::fmt;
+use rand::Rng;
 
 pub const BOARD_SIZE: usize = 26;
 pub const BAR_POS: usize = 0;
@@ -35,10 +41,12 @@ pub enum Color {
 pub type Die = usize;
 pub type DiceRoll = (Die, Die);
 
+// The `from` in Submove is relative to the player.
+// 0 is the bar and 25 the bearing-off point for either player.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Submove {
-    from: Position,
-    die: Die,
+    pub from: Position,
+    pub die: Die,
 }
 
 #[derive(PartialEq, Eq)]
@@ -46,23 +54,54 @@ pub struct Move {
     pub submoves: Vec<Submove>,
 }
 
-pub trait Player {
-    fn make_move(&self, color: Color, roll: DiceRoll) -> Move;
-}
-
 #[derive(Default, Copy, Clone)]
 pub struct Backgammon {
-    red_board: Board,
-    white_board: Board,
+    pub red_board: Board,
+    pub white_board: Board,
+}
+
+pub trait Player {
+    fn get_color(&self) -> Color;
+
+    fn make_move(&self, game: &Backgammon, roll: DiceRoll) -> Move;
+}
+
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Color::Red => write!(f, "red"),
+            Color::White =>write!(f, "white"),
+        }
+    }
+}
+
+impl fmt::Display for Submove {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "from: {}, die: {}", self.from, self.die)
+    }
+}
+
+impl Move {
+    pub fn print(&self) {
+        for submove in &self.submoves {
+            print!("{}, ", submove);
+        }
+        print!("\n");
+        match io::stdout().flush() {
+            Ok(_) => (),
+            Err(e) => println!("error: {}", e),
+        }
+    }
+
 }
 
 impl Board {
 
-    fn get(&self, pos: Position) -> Checker {
+    pub fn get(&self, pos: Position) -> Checker {
         return self.board[pos];
     }
 
-    fn set(&mut self, pos: Position, checkers: Checker) {
+    pub fn set(&mut self, pos: Position, checkers: Checker) {
         self.board[pos] = checkers;
     }
 }
@@ -96,25 +135,25 @@ impl Backgammon {
         self.white_board = Board { board: INITIAL_BOARD };
     }
 
-    fn get_board(&self, color: Color, pos: Position) -> Checker {
+    pub fn get_board(&self, color: Color, pos: Position) -> Checker {
         return match color {
             Color::Red => self.red_board.get(pos),
             Color::White=> self.white_board.get(pos),
         }
     }
 
-    fn set_board(&mut self, color: Color, pos: Position, checkers: Checker) {
+    pub fn set_board(&mut self, color: Color, pos: Position, checkers: Checker) {
         match color {
             Color::Red => self.red_board.set(pos, checkers),
             Color::White => self.white_board.set(pos, checkers),
         }
     }
 
-    fn get_opposite_pos(&self, pos: Position) -> Position {
+    pub fn get_opposite_pos(&self, pos: Position) -> Position {
         return BEARING_OFF_POS - pos;
     }
 
-    fn is_blocked(&self, color: Color, pos: Position) -> bool {
+    pub fn is_blocked(&self, color: Color, pos: Position) -> bool {
         // Reverse the position to look at the opponent's board from your point of view.
         let opposite_pos = self.get_opposite_pos(pos);
         if 1 < self.get_board(color.opposite(), opposite_pos) {
@@ -123,7 +162,7 @@ impl Backgammon {
         return false;
     }
 
-    fn is_all_home(&self, color: Color) -> bool {
+    pub fn is_all_home(&self, color: Color) -> bool {
         let end_of_outer_board = 19;
         for pos in 0..end_of_outer_board {
             if 0 < self.get_board(color, pos) {
@@ -133,8 +172,7 @@ impl Backgammon {
         return true;
     }
 
-    // @cleanup emit user friendly messages somewhere.
-    fn can_do_submove(&self, color: Color, submove: &Submove) -> bool {
+    pub fn can_do_submove(&self, color: Color, submove: &Submove) -> bool {
         // Make sure there is a checker to move.
         if 0 == self.get_board(color, submove.from) {
             return false;
@@ -167,7 +205,7 @@ impl Backgammon {
     }
 
     // List the submoves for a die.
-    fn list_submoves(&self, color: Color, die: Die) -> Vec<Submove> {
+    pub fn list_submoves(&self, color: Color, die: Die) -> Vec<Submove> {
         let mut submoves: Vec<Submove> = Vec::new();
         for pos in 0..BOARD_SIZE {
             let submove = Submove { from: pos, die: die };
@@ -178,7 +216,7 @@ impl Backgammon {
         return submoves;
     }
 
-    fn do_submove(&mut self, color: Color, submove: &Submove) {
+    pub fn do_submove(&mut self, color: Color, submove: &Submove) {
         debug_assert!(self.can_do_submove(color, &submove));
         let destination = submove.destination();
         let checkers_from = self.get_board(color, submove.from);
@@ -197,7 +235,7 @@ impl Backgammon {
 
     // List the moves for the given order of playing the dice.
     // Move.submoves is a stack of submoves.
-    fn list_moves_with_ordered_dice_r(&self, color: Color, dice: &[Die]) -> Vec<Move> {
+    pub fn list_moves_with_ordered_dice_r(&self, color: Color, dice: &[Die]) -> Vec<Move> {
         let mut moves = Vec::new();
         let (die, dice_tail) = match dice.split_first() {
             Some((head, tail)) => (*head, tail),
@@ -227,7 +265,7 @@ impl Backgammon {
     // Rules:
     // You must play all dice if possible.
     // If only one die can be played, the highest possible must be played.
-    fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
+    pub fn list_moves(&self, color: Color, roll: DiceRoll) -> Vec<Move> {
         let is_double = roll.0 == roll.1;
         if is_double {
             let dice = vec!(roll.0, roll.0, roll.0, roll.0);
@@ -268,7 +306,7 @@ impl Backgammon {
         }
     }
 
-    fn can_do_move(&self, color: Color, roll: DiceRoll, mov: &Move) -> bool {
+    pub fn can_do_move(&self, color: Color, roll: DiceRoll, mov: &Move) -> bool {
         let legal_moves = self.list_moves(color, roll);
         for legal_move in &legal_moves {
             if mov == legal_move {
@@ -278,7 +316,7 @@ impl Backgammon {
         return false;
     }
 
-    fn do_move(&mut self, color: Color, mov: &Move) {
+    pub fn do_move(&mut self, color: Color, mov: &Move) {
         let mut move_idx = mov.submoves.len();
         while move_idx > 0 {
             move_idx -= 1;
@@ -286,16 +324,39 @@ impl Backgammon {
         }
     }
 
-    fn play_move<T: Player>(&mut self, color: Color, roll: DiceRoll, player: &T) {
-        let player_move = player.make_move(color, roll);
+    // Return true if the move is legal.
+    pub fn play_move<T: Player>(&mut self, roll: DiceRoll, player: &T) -> bool {
+        let color = player.get_color();
+        let player_move = player.make_move(self, roll);
         if self.can_do_move(color, roll, &player_move) {
             self.do_move(color, &player_move);
+            return true;
         }
+        return false;
+    }
+
+    fn is_game_over(&self) -> bool {
+        let red_checkers = self.get_board(Color::Red, BEARING_OFF_POS);
+        if 15 <= red_checkers {
+            return true;
+        }
+        let white_checkers = self.get_board(Color::White, BEARING_OFF_POS);
+        if 15 <= white_checkers {
+            return true;
+        }
+        return false;
     }
 
     pub fn print(&self) {
-        let mut pos = 13;
-        let end_pos = 1;
+        for pos in 13..19 {
+            print!(" {}", pos);
+        }
+        print!("   ");
+        for pos in 19..25 {
+            print!(" {}", pos);
+        }
+        print!("\n");
+
         let print_checker = |pos: Position| {
             let red_checker = self.get_board(Color::Red, pos);
             if 0 < red_checker {
@@ -310,7 +371,9 @@ impl Backgammon {
             }
             print!(" ..");
         };
-        // @cleanup Wait for a more idiomatic way to iterate.
+
+        let mut pos = 13;
+        let end_pos = 1;
         while pos > end_pos {
             pos -= 1;
             if pos == 6 {
@@ -322,6 +385,7 @@ impl Backgammon {
                self.get_board(Color::Red, 0),
                self.get_board(Color::Red, BEARING_OFF_POS));
         print!("\n");
+
         let mut pos = 12;
         let end_pos = 24;
         while pos < end_pos {
@@ -335,264 +399,60 @@ impl Backgammon {
                self.get_board(Color::White, 0),
                self.get_board(Color::White, BEARING_OFF_POS));
         print!("\n");
+
+        for pos in 0..6 {
+            print!(" {number:>width$}", number=12-pos, width=2);
+        }
+        print!("   ");
+        for pos in 6..12 {
+            print!(" {number:>width$}", number=12-pos, width=2);
+        }
+        print!("\n");
     }
 
+    fn roll_dice(&self) -> DiceRoll {
+        let a = rand::thread_rng().gen_range(1, 7);
+        let b = rand::thread_rng().gen_range(1, 7);
+        return (a, b);
+    }
+
+    pub fn run<S: Player, T: Player>(&mut self, first: &S, second: &T) {
+        loop {
+            self.print();
+            if self.is_game_over() {
+                println!("player {} won", second.get_color());
+                break;
+            }
+            println!("player {} to play", first.get_color());
+            let roll = self.roll_dice();
+            if self.list_moves(first.get_color(), roll).is_empty() {
+                println!("rolled {}-{}, no legal moves", roll.0, roll.1);
+            } else { 
+                loop {
+                    if self.play_move(roll, first) {
+                        break;
+                    }
+                }
+            }
+
+            self.print();
+            if self.is_game_over() {
+                println!("player {} won", first.get_color());
+                break;
+            }
+            println!("player {} to play", second.get_color());
+            let roll = self.roll_dice();
+            if self.list_moves(second.get_color(), roll).is_empty() {
+                println!("rolled {}-{}, no legal moves", roll.0, roll.1);
+            } else {
+                loop {
+                    if self.play_move(roll, second) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
-/*
-fn roll_dice() -> [i8; 2] {
-    let a = rand::thread_rng().gen_range(1, 7);
-    let b = rand::thread_rng().gen_range(1, 7);
-    return [a, b];
-}
-*/
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_all_home_true_for_empty() {
-        let game: Backgammon = Default::default();
-        assert!(game.is_all_home(Color::Red));
-        assert!(game.is_all_home(Color::White));
-    }
-
-    #[test]
-    fn test_is_all_home_false_for_non_home_checker() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(0, 1);
-        game.white_board.set(0, 1);
-        assert!(!game.is_all_home(Color::Red));
-        assert!(!game.is_all_home(Color::White));
-    }
-
-    #[test]
-    fn test_is_blocked_false_for_empty() {
-        let game: Backgammon = Default::default();
-        assert!(!game.is_blocked(Color::Red, 0));
-    }
-
-    #[test]
-    fn test_is_blocked_true_for_blocked() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(0, 2);
-        assert!(game.is_blocked(Color::White, game.get_opposite_pos(0)));
-    }
-
-    #[test]
-    fn test_can_do_submove_true_for_empty() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let submove = Submove { from: 1, die: 1 };
-        assert!(game.can_do_submove(Color::Red, &submove));
-    }
-
-    #[test]
-    fn test_can_do_submove_false_for_not_moving_bar() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(0, 1);
-        let submove = Submove { from: 1, die: 1 };
-        assert!(!game.can_do_submove(Color::Red, &submove));
-    }
-
-    #[test]
-    fn test_can_do_submove_false_for_bearing_off_without_all_in_home() {
-        let mut game: Backgammon = Default::default();
-        let home_pos = BOARD_SIZE - 2;
-        game.red_board.set(1, 1);
-        game.red_board.set(home_pos, 1);
-        let submove = Submove { from: home_pos, die: 1 };
-        assert!(!game.can_do_submove(Color::Red, &submove));
-    }
-
-    #[test]
-    fn test_can_do_submove_false_for_blocked_pos() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let white_pos = game.get_opposite_pos(2);
-        game.white_board.set(white_pos, 2);
-        let submove = Submove { from: 1, die: 1 };
-        assert!(!game.can_do_submove(Color::Red, &submove));
-    }
-
-    #[test]
-    fn test_can_do_submove_false_for_bearing_off_lower() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(BEARING_OFF_POS - 1, 1);
-        game.red_board.set(BEARING_OFF_POS - 2, 1);
-        let submove = Submove { from: BEARING_OFF_POS - 1, die: 2 };
-        assert!(!game.can_do_submove(Color::Red, &submove));
-    }
-
-    #[test]
-    fn test_list_submoves_lists_empty_for_empty() {
-        let game: Backgammon = Default::default();
-        let die = 1;
-        let submoves = game.list_submoves(Color::Red, die);
-        assert_eq!(submoves.len(), 0);
-    }
-
-    #[test]
-    fn test_list_submoves_lists_one_submove() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let die = 1;
-        let submoves = game.list_submoves(Color::Red, die);
-        assert_eq!(submoves.len(), 1);
-        assert_eq!(submoves[0].from, 1);
-        assert_eq!(submoves[0].die, 1);
-    }
-
-    #[test]
-    fn test_do_submove_does_submove_and_hits_blot() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let white_pos = game.get_opposite_pos(2);
-        game.white_board.set(white_pos, 1);
-        let submove = Submove { from: 1, die: 1 };
-        game.do_submove(Color::Red, &submove);
-        assert_eq!(game.red_board.get(1), 0);
-        assert_eq!(game.red_board.get(2), 1);
-        assert_eq!(game.white_board.get(white_pos), 0);
-        assert_eq!(game.white_board.get(0), 1);
-    }
-
-    #[test]
-    fn test_list_moves_with_ordered_dice_r_lists_move_for_two_dice() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let dice = vec!(1, 1);
-        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &dice);
-        assert_eq!(moves.len(), 1);
-        assert_eq!(moves[0].submoves.len(), 2);
-        assert_eq!(moves[0].submoves[1].from, 1);
-        assert_eq!(moves[0].submoves[1].die, 1);
-        assert_eq!(moves[0].submoves[0].from, 2);
-        assert_eq!(moves[0].submoves[0].die, 1);
-    }
-
-    #[test]
-    fn test_list_moves_with_ordered_dice_r_lists_empty_for_zero_dice() {
-        let game: Backgammon = Default::default();
-        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &Vec::new());
-        assert_eq!(moves.len(), 0);
-    }
-
-    #[test]
-    fn test_list_moves_with_ordered_dice_r_lists_empty_for_no_legal_move() {
-        let game: Backgammon = Default::default();
-        let dice = vec!(1);
-        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &dice);
-        assert_eq!(moves.len(), 0);
-    }
-
-    // This can be benchmarked.
-    /*
-    fn test_list_moves_with_ordered_dice_r_lists_double_ones() {
-        let mut game: Backgammon = Default::default();
-        // This should generate a lot of moves.
-        game.red_board.board = [
-            0,  1, 1, 1, 1, 1, 1,   1, 0, 1, 0, 1, 0,
-                1, 0, 1, 0, 1, 0,   1, 0, 1, 0, 1, 0,   0,
-        ];
-        let dice = vec!(1, 1, 1, 1);
-        let moves = game.list_moves_with_ordered_dice_r(Color::Red, &dice);
-        println!("found {} moves", moves.len());
-    }
-    */
-
-    #[test]
-    fn test_list_moves_lists_move_for_double_ones() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let dice_roll = (1, 1);
-        let moves = game.list_moves(Color::Red, dice_roll);
-        assert_eq!(moves.len(), 1);
-        assert_eq!(moves[0].submoves.len(), 4);
-    }
-
-    #[test]
-    fn test_list_moves_lists_moves_for_both_dice() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let dice_roll = (1, 2);
-        let moves = game.list_moves(Color::Red, dice_roll);
-        assert_eq!(moves.len(), 2);
-    }
-
-    #[test]
-    fn test_list_moves_lists_higher_move() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let white_pos_1 = game.get_opposite_pos(4);
-        let white_pos_2 = game.get_opposite_pos(5);
-        game.white_board.set(white_pos_1, 2);
-        game.white_board.set(white_pos_2, 2);
-        let dice_roll = (1, 2);
-        let moves = game.list_moves(Color::Red, dice_roll);
-        assert_eq!(moves.len(), 1);
-        assert_eq!(moves[0].submoves.len(), 1);
-        assert_eq!(moves[0].submoves[0].die, 2);
-    }
-
-    #[test]
-    fn test_list_moves_lists_lower_move() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let white_pos_1 = game.get_opposite_pos(3);
-        let white_pos_2 = game.get_opposite_pos(4);
-        game.white_board.set(white_pos_1, 2);
-        game.white_board.set(white_pos_2, 2);
-        let dice_roll = (1, 2);
-        let moves = game.list_moves(Color::Red, dice_roll);
-        assert_eq!(moves.len(), 1);
-        assert_eq!(moves[0].submoves.len(), 1);
-        assert_eq!(moves[0].submoves[0].die, 1);
-    }
-
-    #[test]
-    fn test_equality_of_moves() {
-        let first_submove  = Submove { from: 1, die: 1 };
-        let second_submove = Submove { from: 2, die: 1 };
-        let first_move     = Move { submoves: vec!(second_submove, first_submove) };
-        let second_move    = Move { submoves: vec!(second_submove, first_submove) };
-        assert!(first_move == second_move);
-    }
-
-    #[test]
-    fn test_can_do_move_true_for_legal_move() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let dice_roll = (1, 2);
-        let first_submove = Submove { from: 1, die: 1 };
-        let second_submove = Submove { from: 2, die: 2 };
-        let legal_move = Move { submoves: vec!(second_submove, first_submove) };
-        assert!(game.can_do_move(Color::Red, dice_roll, &legal_move));
-    }
-
-    #[test]
-    fn test_can_do_move_false_for_illegal_move() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let dice_roll = (1, 1);
-        let first_submove = Submove { from: 1, die: 1 };
-        let second_submove = Submove { from: 2, die: 1 };
-        // This is illegal because it leaves two more dice unused.
-        let illegal_move = Move { submoves: vec!(second_submove, first_submove) };
-        assert!(!game.can_do_move(Color::Red, dice_roll, &illegal_move));
-    }
-
-    #[test]
-    fn test_do_move_does_move() {
-        let mut game: Backgammon = Default::default();
-        game.red_board.set(1, 1);
-        let first_submove = Submove { from: 1, die: 1 };
-        let second_submove = Submove { from: 2, die: 2 };
-        let legal_move = Move { submoves: vec!(second_submove, first_submove) };
-        game.do_move(Color::Red, &legal_move);
-        assert_eq!(game.get_board(Color::Red, 1), 0);
-        assert_eq!(game.get_board(Color::Red, 4), 1);
-    }
-
-}
