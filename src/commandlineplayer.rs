@@ -32,7 +32,7 @@ impl Player for CommandLinePlayer {
 
     fn make_move(&self, game: &Backgammon, roll: DiceRoll) -> Move {
         loop {
-            print!("rolled {}-{}, enter move: ", roll.0, roll.1);
+            print!("enter move: ");
             match io::stdout().flush() {
                 Ok(_) => (),
                 Err(e) => println!("error: {}", e),
@@ -128,10 +128,11 @@ impl CommandLinePlayer {
         }
         // Handle die for bearing off.
         if roll.0 == roll.1 {
-            submoves[0].die = roll.0;
-            submoves[1].die = roll.0;
-            submoves[2].die = roll.0;
-            submoves[3].die = roll.0;
+            for submove in &mut submoves {
+                if submove.from + submove.die >= ::rustgammon::BEARING_OFF_POS {
+                    submove.die = roll.0;
+                }
+            }
         } else if submoves.len() == 2 {
             let sub1 = submoves[0];
             let sub2 = submoves[1];
@@ -158,6 +159,8 @@ impl CommandLinePlayer {
                     submoves[1].die = cmp::min(roll.0, roll.1);
                 }
             }
+        } else if submoves.len() == 1 {
+            submoves[0].die = cmp::max(roll.0, roll.1);
         }
         // Submoves are treated as a stack, so reverse it.
         submoves.reverse();

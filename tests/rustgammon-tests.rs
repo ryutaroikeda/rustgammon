@@ -26,8 +26,8 @@ fn test_is_blocked_false_for_empty() {
 #[test]
 fn test_is_blocked_true_for_blocked() {
     let mut game: Backgammon = Default::default();
-    game.red_board.set(0, 2);
-    assert!(game.is_blocked(Color::White, game.get_opposite_pos(0)));
+    game.red_board.set(1, 2);
+    assert!(game.is_blocked(Color::White, game.get_opposite_pos(1)));
 }
 
 #[test]
@@ -246,10 +246,48 @@ fn test_do_move_does_move() {
 }
 
 #[test]
-fn test_list_moves_with_one_checker() {
+fn test_list_moves_with_one_checker_bearing_off() {
     let mut game: Backgammon = Default::default();
     game.red_board.set(24, 1);
     let roll = (1, 2);
     let moves = game.list_moves(Color::Red, roll);
-    assert_eq!(moves.len(), 2);
+    // We must use 2 to bear off the last checker because it is the higher die.
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].submoves.len(), 1);
+    assert_eq!(moves[0].submoves[0].from, 24);
+    assert_eq!(moves[0].submoves[0].die, 2);
 }
+
+#[test]
+fn test_list_moves_with_three_checkers_bearing_off() {
+    let mut game: Backgammon = Default::default();
+    game.red_board.set(24, 2);
+    game.red_board.set(23, 1);
+    let roll = (2, 2);
+    let moves = game.list_moves(Color::Red, roll);
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].submoves.len(), 3);
+}
+
+#[test]
+fn test_list_moves_with_one_checker_bearing_off_while_two_opposites_in_bar() {
+    let mut game: Backgammon = Default::default();
+    game.red_board.set(24, 1);
+    let white_bar_pos = game.get_opposite_pos(25);
+    game.white_board.set(white_bar_pos, 2);
+    let roll = (2, 3);
+    let moves = game.list_moves(Color::Red, roll);
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].submoves.len(), 1);
+}
+
+#[test]
+fn test_do_submove_does_not_hit_blot_when_bearing_off() {
+    let mut game: Backgammon = Default::default();
+    game.red_board.set(24, 1);
+    game.white_board.set(0, 1);
+    let submove = Submove { from: 24, die: 1 };
+    game.do_submove(Color::Red, &submove);
+    assert_eq!(game.get_board(Color::White, 0), 1);
+}
+

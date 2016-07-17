@@ -154,6 +154,10 @@ impl Backgammon {
     }
 
     pub fn is_blocked(&self, color: Color, pos: Position) -> bool {
+        // The bearing off position should never be blocked.
+        if pos == BEARING_OFF_POS {
+            return false;
+        }
         // Reverse the position to look at the opponent's board from your point of view.
         let opposite_pos = self.get_opposite_pos(pos);
         if 1 < self.get_board(color.opposite(), opposite_pos) {
@@ -175,6 +179,10 @@ impl Backgammon {
     pub fn can_do_submove(&self, color: Color, submove: &Submove) -> bool {
         // Make sure there is a checker to move.
         if 0 == self.get_board(color, submove.from) {
+            return false;
+        }
+        // Don't move checkers that were beared off.
+        if BEARING_OFF_POS == submove.from {
             return false;
         }
         // If there are checkers in the bar, they must be moved first.
@@ -207,7 +215,7 @@ impl Backgammon {
     // List the submoves for a die.
     pub fn list_submoves(&self, color: Color, die: Die) -> Vec<Submove> {
         let mut submoves: Vec<Submove> = Vec::new();
-        for pos in 0..BOARD_SIZE {
+        for pos in 0..BEARING_OFF_POS {
             let submove = Submove { from: pos, die: die };
             if self.can_do_submove(color, &submove) {
                 submoves.push(submove);
@@ -225,8 +233,10 @@ impl Backgammon {
         let opposite_pos = self.get_opposite_pos(destination);
         let opposite_color = color.opposite();
         let is_blot = 0 < self.get_board(opposite_color, opposite_pos);
-        if is_blot {
-            self.set_board(opposite_color, BAR_POS, 1);
+        // Hit the blot, but not if we're bearing off.
+        if is_blot && (destination != BEARING_OFF_POS) {
+            let checkers_in_bar = self.get_board(opposite_color, BAR_POS);
+            self.set_board(opposite_color, BAR_POS, checkers_in_bar + 1);
             self.set_board(opposite_color, opposite_pos, 0);
         }
         self.set_board(color, submove.from, checkers_from - 1);
@@ -428,6 +438,7 @@ impl Backgammon {
             if self.list_moves(first.get_color(), roll).is_empty() {
                 println!("rolled {}-{}, no legal moves", roll.0, roll.1);
             } else { 
+                println!("rolled {}-{}", roll.0, roll.1);
                 loop {
                     if self.play_move(roll, first) {
                         break;
@@ -445,6 +456,7 @@ impl Backgammon {
             if self.list_moves(second.get_color(), roll).is_empty() {
                 println!("rolled {}-{}, no legal moves", roll.0, roll.1);
             } else {
+                println!("rolled {}-{}", roll.0, roll.1);
                 loop {
                     if self.play_move(roll, second) {
                         break;
